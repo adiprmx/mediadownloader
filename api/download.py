@@ -1,9 +1,12 @@
 from http.server import BaseHTTPRequestHandler
 import json
+import os
 import re
 import urllib.parse
 
 from yt_dlp import YoutubeDL
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _platform(url: str) -> str:
@@ -43,6 +46,43 @@ def _pick_url(info: dict) -> str | None:
     return info.get("url")
 
 
+def _extract(url: str) -> dict:
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "socket_timeout": 12,
+        "format": "best",
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    media_url = _pick_url(info)
+    if not media_url:
+        return {"ok": False, "error": "Nggak ketemu file videonya di link itu 😅"}
+    return {
+        "ok": True,
+        "platform": _platform(url),
+        "title": info.get("title") or "Video",
+        "thumbnail": info.get("thumbnail") or "",
+        "download_url": media_url,
+        "ext": info.get("ext") or "mp4",
+    }
+
+
+def _friendly_error(e: Exception) -> str:
+    msg = str(e).lower()
+    if ("sign in" in msg or "confirm you're not a bot" in msg
+            or "403" in msg or "forbidden" in msg):
+        return ("Platform ini ngeblokir server gratis 😅 "
+                "Coba link TikTok / Instagram / X.")
+    if "unsupported url" in msg:
+        return "Link ini nggak didukung. Coba TikTok / Instagram / X / Facebook."
+    if "private" in msg:
+        return "Videonya private — cuma video publik yang bisa diambil."
+    return "Gagal ambil video. Coba lagi atau pakai link lain."
+
+
 class handler(BaseHTTPRequestHandler):
     def _send(self, code: int, obj: dict) -> None:
         body = json.dumps(obj).encode()
@@ -53,49 +93,35 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_file(self, filename: str, ctype: str) -> None:
+        path = os.path.join(ROOT, filename)
+        if not os.path.isfile(path):
+            self.send_response(404)
+            self.end_headers()
+            return
+        with open(path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
-        try:
-            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            url = (qs.get("url") or [""])[0].strip()
-            if not url or not re.match(r"^https?://", url):
-                return self._send(400, {
-                    "ok": False,
-                    "error": "URL-nya nggak valid. Tempel link video yang lengkap ya.",
-                })
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "skip_download": True,
-                "noplaylist": True,
-                "socket_timeout": 12,
-                "format": "best",
-            }
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-            media_url = _pick_url(info)
-            if not media_url:
-                return self._send(200, {
-                    "ok": False,
-                    "error": "Nggak ketemu file videonya di link itu 😅",
-                })
-            return self._send(200, {
-                "ok": True,
-                "platform": _platform(url),
-                "title": info.get("title") or "Video",
-                "thumbnail": info.get("thumbnail") or "",
-                "download_url": media_url,
-                "ext": info.get("ext") or "mp4",
-            })
-        except Exception as e:  # noqa: BLE001 - sederhanakan untuk user
-            msg = str(e).lower()
-            if ("sign in" in msg or "confirm you're not a bot" in msg
-                    or "403" in msg or "forbidden" in msg):
-                err = ("Platform ini ngeblokir server gratis 😅 "
-                       "Coba link TikTok / Instagram / X.")
-            elif "unsupported url" in msg:
-                err = "Link ini nggak didukung. Coba TikTok / Instagram / X / Facebook."
-            elif "private" in msg:
-                err = "Videonya private — cuma video publik yang bisa diambil."
-            else:
-                err = "Gagal ambil video. Coba lagi atau pakai link lain."
-            return self._send(200, {"ok": False, "error": err})
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in ("/", "/index.html"):
+            return self._serve_file("index.html", "text/html; charset=utf-8")
+        if parsed.path == "/api/download":
+            try:
+                qs = urllib.parse.parse_qs(parsed.query)
+                url = (qs.get("url") or [""])[0].strip()
+                if not url or not re.match(r"^https?://", url):
+                    return self._send(400, {
+                        "ok": False,
+                        "error": "URL-nya nggak valid. Tempel link video yang lengkap ya.",
+                    })
+                return self._send(200, _extract(url))
+            except Exception as e:  # noqa: BLE001 - sederhanakan untuk user
+                return self._send(200, {"ok": False, "error": _friendly_error(e)})
+        self.send_response(404)
+        self.end_headers()
