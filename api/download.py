@@ -117,8 +117,8 @@ def _extract(url: str) -> dict:
     }
 
 
-def _friendly_error(e: Exception) -> str:
-    msg = str(e).lower()
+def _friendly_error(e: Exception, url: str = "") -> str:
+    msg = (str(e) + " " + url).lower()
     if ("sign in" in msg or "confirm you're not a bot" in msg
             or "403" in msg or "forbidden" in msg):
         return ("Server gratis diblokir platform ini 😅 "
@@ -128,6 +128,10 @@ def _friendly_error(e: Exception) -> str:
         return "Link ini nggak didukung. Coba TikTok / Instagram / X / Facebook."
     if "private" in msg:
         return "Videonya private — cuma video publik yang bisa diambil."
+    if "cannot parse data" in msg and "facebook" in msg:
+        return ("Facebook nolak akses server 😅 "
+                "Video Facebook publik kadang bisa — coba link lain, "
+                "atau pakai TikTok yang paling lancar.")
     return "Gagal ambil video. Coba lagi atau pakai link lain."
 
 
@@ -168,8 +172,14 @@ class handler(BaseHTTPRequestHandler):
                         "ok": False,
                         "error": "URL-nya nggak valid. Tempel link video yang lengkap ya.",
                     })
+                final = url
+                if "facebook.com/groups/" in final.lower():
+                    return self._send(200, {"ok": False, "error": (
+                        "Itu postingan grup Facebook — butuh login buat dibuka, "
+                        "jadi server nggak bisa ambil 😅 Coba video Facebook "
+                        "yang publik (dari halaman/reels publik).")})
                 return self._send(200, _extract(url))
             except Exception as e:  # noqa: BLE001 - sederhanakan untuk user
-                return self._send(200, {"ok": False, "error": _friendly_error(e)})
+                return self._send(200, {"ok": False, "error": _friendly_error(e, url)})
         self.send_response(404)
         self.end_headers()
