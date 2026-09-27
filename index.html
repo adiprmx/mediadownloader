@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ADIP Downloader — Download Video TikTok, IG, X</title>
-<meta name="description" content="Tempel link, download video TikTok. Gratis, tanpa watermark (kalau bisa).">
+<title>ADIP Downloader — Download Video & Foto TikTok, IG, X</title>
+<meta name="description" content="Tempel link, download video & foto TikTok. Gratis, tanpa watermark (kalau bisa).">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -47,6 +47,9 @@
     overflow:hidden;
   }
   #thumb { width:100%; max-height:280px; object-fit:cover; display:block; }
+  #gallery { display:none; grid-template-columns:repeat(2,1fr); gap:8px; padding:16px 16px 0; }
+  #gallery a { display:block; border-radius:8px; overflow:hidden; border:1px solid #2a2a3d; }
+  #gallery img { width:100%; height:150px; object-fit:cover; display:block; }
   #result .info { padding:16px; }
   #platform {
     display:inline-block; font-size:.75rem; font-weight:700; color:#0a0a12;
@@ -67,7 +70,7 @@
 <body>
 <div class="wrap">
   <h1>ADIP DOWNLOADER</h1>
-  <p class="sub">Tempel link video, download langsung. Gratis, no ribet.</p>
+  <p class="sub">Tempel link video/foto, download langsung. Gratis, no ribet.</p>
 
   <div class="chips">
     <span class="chip">🎵 TikTok ✅</span>
@@ -76,17 +79,19 @@
   </div>
 
   <div class="box">
-    <input id="url" type="url" placeholder="Tempel link video di sini…" autocomplete="off">
-    <button class="main" id="go" onclick="fetchVideo()">⬇ Ambil Video</button>
+    <input id="url" type="url" placeholder="Tempel link video/foto di sini…" autocomplete="off">
+    <button class="main" id="go" onclick="fetchVideo()">⬇ Ambil Media</button>
     <div id="status"></div>
     <div id="result">
       <div class="card">
         <img id="thumb" alt="thumbnail">
+        <div id="gallery"></div>
         <div class="info">
           <span id="platform"></span>
           <div id="title"></div>
           <a class="dl" id="dllink" href="#" target="_blank" rel="noopener">⬇ Download Sekarang</a>
-          <div class="hint">Kalau nggak ke-download otomatis, videonya bakal kebuka di tab baru — tap ⋮ → Download di situ.</div>
+          <div class="hint" id="videohint">Kalau nggak ke-download otomatis, videonya bakal kebuka di tab baru — tap ⋮ → Download di situ.</div>
+          <div class="hint" id="photohint" style="display:none">Tap fotonya buat buka ukuran penuh, terus tap-tahan → Download / Save Image.</div>
         </div>
       </div>
     </div>
@@ -97,8 +102,8 @@
     Keduanya ngeblokir IP server gratis kayak gini — bahkan untuk postingan publik. TikTok biasanya bisa (ada jalur cadangan), IG / X kadang bisa kadang nggak.<br><br>
     <b>Apakah ada watermark TikTok?</b><br>
     Diusahakan diambil yang tanpa watermark. Kalau tetap ada, berarti sumbernya cuma nyediain itu.<br><br>
-    <b>Video private bisa?</b><br>
-    Nggak. Cuma video publik.
+    <b>Video/foto private bisa?</b><br>
+    Nggak. Cuma yang publik.
   </div>
 
   <footer>ADIP Downloader — free tier, no CC required ✌️</footer>
@@ -118,12 +123,32 @@ async function fetchVideo() {
     const r = await fetch('/api/download?url=' + encodeURIComponent(url));
     const d = await r.json();
     if (!d.ok) { status.textContent = '❌ ' + d.error; return; }
-    document.getElementById('thumb').src = d.thumbnail || '';
-    document.getElementById('platform').textContent = d.platform;
+    const isPhotos = d.media_type === 'photos' && (d.images || []).length > 0;
+    const thumb = document.getElementById('thumb');
+    const dllink = document.getElementById('dllink');
+    const gallery = document.getElementById('gallery');
+    thumb.style.display = isPhotos ? 'none' : 'block';
+    dllink.style.display = isPhotos ? 'none' : 'block';
+    document.getElementById('videohint').style.display = isPhotos ? 'none' : 'block';
+    document.getElementById('photohint').style.display = isPhotos ? 'block' : 'none';
+    gallery.style.display = isPhotos ? 'grid' : 'none';
+    gallery.innerHTML = '';
+    if (isPhotos) {
+      d.images.forEach((src, i) => {
+        const a = document.createElement('a');
+        a.href = src; a.target = '_blank'; a.rel = 'noopener';
+        const im = document.createElement('img');
+        im.src = src; im.alt = 'foto ' + (i + 1); im.loading = 'lazy';
+        a.appendChild(im); gallery.appendChild(a);
+      });
+      document.getElementById('platform').textContent = d.platform + ' · ' + d.images.length + ' foto';
+    } else {
+      document.getElementById('platform').textContent = d.platform;
+      dllink.href = d.download_url;
+      dllink.setAttribute('download', '');
+    }
+    thumb.src = d.thumbnail || '';
     document.getElementById('title').textContent = d.title;
-    const a = document.getElementById('dllink');
-    a.href = d.download_url;
-    a.setAttribute('download', '');
     result.style.display = 'block';
     status.textContent = '✅ Ketemu! Tinggal download.';
   } catch (e) {
