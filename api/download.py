@@ -1,7 +1,9 @@
 from http.server import BaseHTTPRequestHandler
+import http.client
 import json
 import os
 import re
+import subprocess
 import urllib.parse
 import urllib.request
 
@@ -58,27 +60,62 @@ def _pick_url(info: dict) -> str | None:
 
 
 def _extract_tikwm(url: str) -> dict | None:
-    """Fallback TikTok via API gratis tikwm. Return None kalau gagal."""
+    """Fallback TikTok via API gratis tikwm. Bisa video maupun foto (slideshow)."""
+    for _ in range(3):  # API gratis kadang flaky → coba 3x
+        res = _tikwm_once(url)
+        if res:
+            return res
+    return None
+
+
+def _tikwm_fetch(url: str) -> dict | None:
+    """Ambil JSON dari tikwm via curl (transport paling bisa diandelin di sini)."""
+    q = urllib.parse.urlencode({"url": url, "hd": 1})
+    api = f"https://www.tikwm.com/api/?{q}"
     try:
-        q = urllib.parse.urlencode({"url": url, "hd": 1})
-        req = urllib.request.Request(
-            f"https://www.tikwm.com/api/?{q}", headers=TIKWM_HEADERS)
-        with urllib.request.urlopen(req, timeout=20) as r:
-            data = json.loads(r.read().decode())
+        r = subprocess.run(
+            ["curl", "-s", "--max-time", "25",
+             "-A", TIKWM_HEADERS["User-Agent"],
+             "-H", f"Accept: {TIKWM_HEADERS['Accept']}",
+             "-H", f"Origin: {TIKWM_HEADERS['Origin']}",
+             "-H", f"Referer: {TIKWM_HEADERS['Referer']}",
+             "-H", f"x-requested-with: {TIKWM_HEADERS['x-requested-with']}",
+             api],
+            capture_output=True, text=True, timeout=30)
+        if r.returncode != 0 or not r.stdout.strip():
+            return None
+        return json.loads(r.stdout)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _tikwm_once(url: str) -> dict | None:
+    data = _tikwm_fetch(url)
+    if not data:
+        return None
+    try:
         if data.get("code") != 0:
             return None
         d = data.get("data") or {}
         play = d.get("hdplay") or d.get("play") or d.get("wmplay")
-        if not play:
+        images = d.get("images") or []
+        if not play and not images:
             return None
         author = d.get("author") or {}
         uname = author.get("unique_id") or "tiktok"
+        # Post foto (/photo/) → tampilkan galeri foto, bukan video slideshow
+        is_photos = "/photo/" in url.lower() or (bool(images) and not play)
+        if is_photos and not images and play:
+            # fallback: foto tak ada tapi ada video → tampilkan sebagai video
+            is_photos = False
         return {
             "ok": True,
             "platform": "TikTok",
-            "title": d.get("title") or f"Video TikTok @{uname}",
-            "thumbnail": d.get("cover") or "",
-            "download_url": play,
+            "title": d.get("title") or f"{'Foto' if is_photos else 'Video'} TikTok @{uname}",
+            "thumbnail": (images[0] if is_photos and images else None) or d.get("cover") or "",
+            "download_url": "" if is_photos else (play or ""),
+            "images": images if is_photos else [],
+            "media_type": "photos" if is_photos else "video",
             "ext": "mp4",
         }
     except Exception:  # noqa: BLE001 - fallback memang boleh gagal diam-diam
@@ -113,6 +150,8 @@ def _extract(url: str) -> dict:
         "title": info.get("title") or "Video",
         "thumbnail": info.get("thumbnail") or "",
         "download_url": media_url,
+        "images": [],
+        "media_type": "video",
         "ext": info.get("ext") or "mp4",
     }
 
