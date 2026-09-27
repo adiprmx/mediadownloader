@@ -3,8 +3,19 @@ import json
 import os
 import re
 import urllib.parse
+import urllib.request
 
 from yt_dlp import YoutubeDL
+
+# Header ala browser — dibutuhkan API tikwm agar tidak ditolak.
+TIKWM_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) "
+                   "Gecko/20100101 Firefox/141.0"),
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Origin": "https://tikwm.com",
+    "Referer": "https://tikwm.com/",
+    "x-requested-with": "XMLHttpRequest",
+}
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -46,17 +57,53 @@ def _pick_url(info: dict) -> str | None:
     return info.get("url")
 
 
+def _extract_tikwm(url: str) -> dict | None:
+    """Fallback TikTok via API gratis tikwm. Return None kalau gagal."""
+    try:
+        q = urllib.parse.urlencode({"url": url, "hd": 1})
+        req = urllib.request.Request(
+            f"https://www.tikwm.com/api/?{q}", headers=TIKWM_HEADERS)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read().decode())
+        if data.get("code") != 0:
+            return None
+        d = data.get("data") or {}
+        play = d.get("hdplay") or d.get("play") or d.get("wmplay")
+        if not play:
+            return None
+        author = d.get("author") or {}
+        uname = author.get("unique_id") or "tiktok"
+        return {
+            "ok": True,
+            "platform": "TikTok",
+            "title": d.get("title") or f"Video TikTok @{uname}",
+            "thumbnail": d.get("cover") or "",
+            "download_url": play,
+            "ext": "mp4",
+        }
+    except Exception:  # noqa: BLE001 - fallback memang boleh gagal diam-diam
+        return None
+
+
 def _extract(url: str) -> dict:
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noplaylist": True,
-        "socket_timeout": 12,
-        "format": "best",
-    }
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "noplaylist": True,
+            "socket_timeout": 12,
+            "format": "best",
+        }
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        # yt-dlp gagal (sering karena IP server diblokir) → coba fallback TikTok
+        if "tiktok.com" in url.lower():
+            fb = _extract_tikwm(url)
+            if fb:
+                return fb
+        raise
     media_url = _pick_url(info)
     if not media_url:
         return {"ok": False, "error": "Nggak ketemu file videonya di link itu 😅"}
@@ -74,8 +121,9 @@ def _friendly_error(e: Exception) -> str:
     msg = str(e).lower()
     if ("sign in" in msg or "confirm you're not a bot" in msg
             or "403" in msg or "forbidden" in msg):
-        return ("Platform ini ngeblokir server gratis 😅 "
-                "Coba link TikTok / Instagram / X.")
+        return ("Server gratis diblokir platform ini 😅 "
+                "TikTok biasanya bisa — coba lagi. "
+                "Instagram / X / YouTube sering gagal dari server gratis.")
     if "unsupported url" in msg:
         return "Link ini nggak didukung. Coba TikTok / Instagram / X / Facebook."
     if "private" in msg:
